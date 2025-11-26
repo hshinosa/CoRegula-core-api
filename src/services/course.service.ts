@@ -158,6 +158,7 @@ export class CourseService {
                 name: enrollment.course.name,
                 description: enrollment.course.description,
                 ownerName: enrollment.course.owner.name,
+                owner: enrollment.course.owner,
                 studentsCount: enrollment.course._count.students,
                 enrolledAt: enrollment.enrolledAt,
             }));
