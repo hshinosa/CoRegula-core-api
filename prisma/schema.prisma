@@ -1,0 +1,275 @@
+// Prisma Schema for CoRegula Core API
+// PostgreSQL Database
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// USER & AUTHENTICATION
+// ============================================
+
+enum UserRole {
+  student
+  lecturer
+  admin
+}
+
+model User {
+  id            String   @id @default(uuid())
+  email         String   @unique
+  password      String
+  name          String
+  role          UserRole @default(student)
+  googleId      String?  @unique @map("google_id")
+  avatarUrl     String?  @map("avatar_url")
+  isActive      Boolean  @default(true) @map("is_active")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  ownedCourses    Course[]        @relation("CourseOwner")
+  enrolledCourses CourseStudent[]
+  groupMembers    GroupMember[]
+  learningGoals   LearningGoal[]
+  reflections     Reflection[]
+  knowledgeBases  KnowledgeBase[]
+  chatMessages    ChatMessage[]
+  aiChats         AiChat[]
+
+  @@map("users")
+}
+
+// ============================================
+// COURSE MANAGEMENT
+// ============================================
+
+model Course {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  name        String
+  description String?
+  joinCode    String   @unique @map("join_code")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  // Owner (Lecturer)
+  ownerId String @map("owner_id")
+  owner   User   @relation("CourseOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+
+  // Relations
+  students       CourseStudent[]
+  groups         Group[]
+  knowledgeBases KnowledgeBase[]
+
+  @@map("courses")
+}
+
+model CourseStudent {
+  id         String   @id @default(uuid())
+  enrolledAt DateTime @default(now()) @map("enrolled_at")
+
+  // Relations
+  courseId String @map("course_id")
+  course   Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  userId   String @map("user_id")
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([courseId, userId])
+  @@map("course_students")
+}
+
+// ============================================
+// GROUP MANAGEMENT
+// ============================================
+
+model Group {
+  id        String   @id @default(uuid())
+  name      String
+  joinCode  String   @unique @map("join_code")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Creator (can be lecturer or student)
+  createdBy String @map("created_by")
+
+  // Relations
+  courseId   String        @map("course_id")
+  course     Course        @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  members    GroupMember[]
+  chatSpaces ChatSpace[]
+
+  @@map("groups")
+}
+
+model GroupMember {
+  id       String   @id @default(uuid())
+  joinedAt DateTime @default(now()) @map("joined_at")
+
+  // Relations
+  groupId String @map("group_id")
+  group   Group  @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  userId  String @map("user_id")
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, userId])
+  @@map("group_members")
+}
+
+// ============================================
+// CHAT SPACES (Multiple chat rooms per group)
+// ============================================
+
+model ChatSpace {
+  id          String    @id @default(uuid())
+  name        String
+  description String?
+  isDefault   Boolean   @default(false) @map("is_default")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  
+  // Session closure
+  closedAt    DateTime? @map("closed_at")
+  closedBy    String?   @map("closed_by")
+
+  // Creator
+  createdBy String @map("created_by")
+
+  // Relations
+  groupId     String        @map("group_id")
+  group       Group         @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  messages    ChatMessage[]
+  goals       LearningGoal[]
+  reflections Reflection[]
+
+  @@map("chat_spaces")
+}
+
+model ChatMessage {
+  id            String   @id @default(uuid())
+  content       String
+  senderType    String   @map("sender_type") // 'user' | 'ai' | 'bot'
+  isIntervention Boolean @default(false) @map("is_intervention")
+  createdAt     DateTime @default(now()) @map("created_at")
+  
+  // Reply to another message
+  replyToId String?      @map("reply_to_id")
+  replyTo   ChatMessage? @relation("MessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
+  replies   ChatMessage[] @relation("MessageReplies")
+
+  // Relations
+  chatSpaceId String    @map("chat_space_id")
+  chatSpace   ChatSpace @relation(fields: [chatSpaceId], references: [id], onDelete: Cascade)
+  senderId    String    @map("sender_id")
+  sender      User      @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@map("chat_messages")
+}
+
+// ============================================
+// LEARNING GOALS & REFLECTIONS
+// ============================================
+
+model LearningGoal {
+  id          String   @id @default(uuid())
+  content     String
+  isValidated Boolean  @default(false) @map("is_validated")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  // Relations - Goal belongs to a ChatSpace, not Group
+  chatSpaceId String       @map("chat_space_id")
+  chatSpace   ChatSpace    @relation(fields: [chatSpaceId], references: [id], onDelete: Cascade)
+  userId      String       @map("user_id")
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reflections Reflection[]
+
+  @@map("learning_goals")
+}
+
+model Reflection {
+  id        String   @id @default(uuid())
+  content   String
+  type      String   @default("session") // 'session' | 'weekly'
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  goalId      String?    @map("goal_id")
+  goal        LearningGoal? @relation(fields: [goalId], references: [id], onDelete: SetNull)
+  userId      String     @map("user_id")
+  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  chatSpaceId String?    @map("chat_space_id")
+  chatSpace   ChatSpace? @relation(fields: [chatSpaceId], references: [id], onDelete: SetNull)
+
+  @@map("reflections")
+}
+
+// ============================================
+// KNOWLEDGE BASE
+// ============================================
+
+enum VectorStatus {
+  pending
+  processing
+  ready
+  failed
+}
+
+model KnowledgeBase {
+  id           String       @id @default(uuid())
+  fileName     String       @map("file_name")
+  filePath     String       @map("file_path")
+  fileSize     Int          @map("file_size")
+  mimeType     String       @map("mime_type")
+  vectorStatus VectorStatus @default(pending) @map("vector_status")
+  errorMessage String?      @map("error_message")
+  uploadedAt   DateTime     @default(now()) @map("uploaded_at")
+  processedAt  DateTime?    @map("processed_at")
+
+  // Relations
+  courseId   String @map("course_id")
+  course     Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  uploadedBy String @map("uploaded_by")
+  uploader   User   @relation(fields: [uploadedBy], references: [id], onDelete: Cascade)
+
+  @@map("knowledge_bases")
+}
+
+// ============================================
+// AI CHAT (Personal AI Assistant for Students)
+// ============================================
+
+model AiChat {
+  id        String   @id @default(uuid())
+  title     String   @default("Chat Baru")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  userId   String         @map("user_id")
+  user     User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages AiChatMessage[]
+
+  @@map("ai_chats")
+}
+
+model AiChatMessage {
+  id        String   @id @default(uuid())
+  role      String   // 'user' | 'assistant'
+  content   String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Relations
+  chatId String @map("chat_id")
+  chat   AiChat @relation(fields: [chatId], references: [id], onDelete: Cascade)
+
+  @@map("ai_chat_messages")
+}

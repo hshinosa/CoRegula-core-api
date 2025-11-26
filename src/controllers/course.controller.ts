@@ -1,0 +1,208 @@
+import { Response, NextFunction } from 'express';
+import { CourseService } from '../services/course.service.js';
+import { KnowledgeBaseService } from '../services/knowledgeBase.service.js';
+import { GroupService } from '../services/group.service.js';
+import { GoalService } from '../services/goal.service.js';
+import { AuthenticatedRequest } from '../middleware/auth.js';
+
+export class CourseController {
+    /**
+     * POST /api/courses
+     * Create a new course (lecturer only)
+     */
+    static async create(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+        try {
+            const course = await CourseService.createCourse(req.body, req.user!.userId);
+
+            res.status(201).json({
+                data: course,
+                meta: {
+                    message: 'Course created successfully',
+                },
+            });
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    /**
+     * POST /api/courses/join
+     * Join a course with join code (student only)
+     */
+    static async join(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+        try {
+            const course = await CourseService.joinCourse(req.body, req.user!.userId);
+
+            res.json({
+                data: course,
+                meta: {
+                    message: 'Enrolled successfully',
+                },
+            });
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    /**
+     * GET /api/courses
+     * Get my courses (owned or enrolled)
+     */
+    static async index(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+        try {
+            const courses = await CourseService.getMyCourses(req.user!.userId, req.user!.role);
+
+            res.json({
+                data: courses,
+            });
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    /**
+     * GET /api/courses/:id
+     * Get course details
+     */
+    static async show(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+        try {
+            const course = await CourseService.getCourseDetails(
+                req.params.id,
+                req.user!.userId,
+                req.user!.role
+            );
+
+            res.json({
+                data: course,
+            });
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    /**
+     * GET /api/courses/:id/students
+     * Get enrolled students (lecturer only)
+     */
+    static async getStudents(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+        try {
+            const students = await CourseService.getCourseStudents(req.params.id, req.user!.userId);
+
+            res.json({
+                data: students,
+            });
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    /**
+     * POST /api/courses/:id/knowledge-base
+     * Upload PDF to knowledge base (lecturer only)
+     */
+    static async uploadKnowledgeBase(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+        try {
+            if (!req.file) {
+                return res.status(400).json({
+                    error: { code: 'NO_FILE', message: 'No file uploaded' },
+                });
+            }
+
+            const result = await KnowledgeBaseService.uploadFile(
+                req.params.id,
+                req.file,
+                req.user!.userId
+            );
+
+            res.status(201).json({
+                data: result,
+                meta: {
+                    message: 'File uploaded successfully',
+                },
+            });
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    /**
+     * GET /api/courses/:id/knowledge-base
+     * Get knowledge base files
+     */
+    static async getKnowledgeBase(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+        try {
+            const files = await KnowledgeBaseService.getCourseFiles(
+                req.params.id,
+                req.user!.userId,
+                req.user!.role
+            );
+
+            res.json({
+                data: files,
+            });
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    /**
+     * GET /api/courses/enrolled
+     * Get student's enrolled courses
+     */
+    static async enrolled(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+        try {
+            const courses = await CourseService.getMyCourses(req.user!.userId, 'student');
+
+            res.json({
+                data: courses,
+            });
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    /**
+     * GET /api/courses/:id/my-group
+     * Get student's group in a course
+     */
+    static async getMyGroup(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+        try {
+            const group = await GroupService.getMyGroup(req.params.id, req.user!.userId);
+
+            res.json({
+                data: group,
+            });
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    /**
+     * GET /api/courses/:id/my-goal
+     * Get student's goal in a course
+     */
+    static async getMyGoal(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+        try {
+            // First get the student's group in this course
+            const group = await GroupService.getMyGroup(req.params.id, req.user!.userId);
+            
+            if (!group) {
+                return res.json({
+                    data: null,
+                });
+            }
+
+            // Then get the student's goals - now structured with chatSpace.group.course
+            const goals = await GoalService.getMyGoals(req.user!.userId);
+            const courseGoal = goals.find((g: { chatSpace: { group: { course: { id: string } } } }) => 
+                g.chatSpace?.group?.course?.id === req.params.id
+            );
+
+            res.json({
+                data: courseGoal || null,
+            });
+        } catch (error) {
+            next(error);
+        }
+    }
+}

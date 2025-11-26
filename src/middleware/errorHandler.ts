@@ -1,0 +1,69 @@
+import { Request, Response, NextFunction } from 'express';
+
+export interface AppError extends Error {
+    statusCode?: number;
+    code?: string;
+    details?: Record<string, unknown>;
+}
+
+export class ApiError extends Error implements AppError {
+    statusCode: number;
+    code: string;
+    details?: Record<string, unknown>;
+
+    constructor(statusCode: number, code: string, message: string, details?: Record<string, unknown>) {
+        super(message);
+        this.statusCode = statusCode;
+        this.code = code;
+        this.details = details;
+        this.name = 'ApiError';
+    }
+
+    static badRequest(message: string, details?: Record<string, unknown>) {
+        return new ApiError(400, 'BAD_REQUEST', message, details);
+    }
+
+    static unauthorized(message = 'Unauthorized') {
+        return new ApiError(401, 'UNAUTHORIZED', message);
+    }
+
+    static forbidden(message = 'Access denied') {
+        return new ApiError(403, 'FORBIDDEN', message);
+    }
+
+    static notFound(message = 'Resource not found') {
+        return new ApiError(404, 'NOT_FOUND', message);
+    }
+
+    static conflict(message: string) {
+        return new ApiError(409, 'CONFLICT', message);
+    }
+
+    static internal(message = 'Internal server error') {
+        return new ApiError(500, 'INTERNAL_ERROR', message);
+    }
+}
+
+export function errorHandler(
+    err: AppError,
+    _req: Request,
+    res: Response,
+    _next: NextFunction
+): void {
+    const statusCode = err.statusCode || 500;
+    const code = err.code || 'INTERNAL_ERROR';
+    const message = err.message || 'An unexpected error occurred';
+
+    // Log error in development
+    if (process.env.NODE_ENV !== 'production') {
+        console.error('Error:', err);
+    }
+
+    res.status(statusCode).json({
+        error: {
+            code,
+            message,
+            ...(err.details && { details: err.details }),
+        },
+    });
+}
