@@ -38,6 +38,7 @@ router.post('/join', requireStudent, validateBody(joinGroupSchema), GroupControl
 router.get('/course/:courseId', GroupController.index);
 router.get('/my/:courseId', GroupController.getMyGroup);
 router.get('/:id', GroupController.show);
+router.delete('/:id', GroupController.delete);
 
 // Group member management
 router.post('/:id/invite', validateBody(inviteMembersSchema), GroupController.inviteMembers);

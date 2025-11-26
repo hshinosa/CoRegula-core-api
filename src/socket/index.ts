@@ -126,10 +126,10 @@ export function initSocketIO(server: HttpServer): Server {
                     .limit(100)
                     .lean();
 
-                // If this is a fresh chat space (no messages yet), send welcome message with goals
+                // If this is a fresh chat space (no messages yet), send welcome message with goal
                 if (chatHistory.length === 0) {
-                    // Get goals for this chat space
-                    const goals = await prisma.learningGoal.findMany({
+                    // Get the single shared goal for this chat space
+                    const goal = await prisma.learningGoal.findFirst({
                         where: { chatSpaceId },
                         select: { content: true },
                     });
@@ -137,11 +137,9 @@ export function initSocketIO(server: HttpServer): Server {
                     // Create welcome message content
                     let welcomeContent = `🎯 **Selamat datang di sesi diskusi "${chatSpace.name}"!**\n\n`;
                     
-                    if (goals.length > 0) {
+                    if (goal) {
                         welcomeContent += `📚 **Tujuan Pembelajaran:**\n`;
-                        goals.forEach((goal, index) => {
-                            welcomeContent += `${index + 1}. ${goal.content}\n`;
-                        });
+                        welcomeContent += `${goal.content}\n`;
                         welcomeContent += `\nSelamat berdiskusi! Fokus pada tujuan di atas dan bantu satu sama lain untuk memahami materi. 💪`;
                     } else {
                         welcomeContent += `Belum ada tujuan pembelajaran yang ditetapkan untuk sesi ini.\nSilakan mulai berdiskusi dengan anggota kelompok Anda!`;

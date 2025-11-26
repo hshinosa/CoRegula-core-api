@@ -10,6 +10,38 @@ const generateJoinCode = (): string => {
 
 export class GroupService {
     /**
+     * Delete a group (lecturer only, cascade deletes members/chat spaces)
+     */
+    static async deleteGroup(groupId: string, userId: string, userRole: string) {
+        if (userRole !== 'lecturer') {
+            throw ApiError.forbidden('Only lecturers can delete groups');
+        }
+
+        const group = await prisma.group.findUnique({
+            where: { id: groupId },
+            include: {
+                course: {
+                    select: { ownerId: true },
+                },
+            },
+        });
+
+        if (!group) {
+            throw ApiError.notFound('Group not found');
+        }
+
+        if (group.course.ownerId !== userId) {
+            throw ApiError.forbidden('You do not own this course');
+        }
+
+        await prisma.group.delete({
+            where: { id: groupId },
+        });
+
+        return { success: true };
+    }
+
+    /**
      * Create a new group in a course (lecturer or student can create)
      */
     static async createGroup(courseId: string, data: CreateGroupInput, userId: string, userRole: string) {
@@ -224,10 +256,20 @@ export class GroupService {
                     },
                 },
                 chatSpaces: {
+                    include: {
+                        _count: {
+                            select: {
+                                goals: true,
+                            },
+                        },
+                    },
                     orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
                 },
                 _count: {
-                    select: { goals: true },
+                    select: {
+                        members: true,
+                        chatSpaces: true,
+                    },
                 },
             },
         });
@@ -249,7 +291,7 @@ export class GroupService {
                 description: cs.description,
                 isDefault: cs.isDefault,
             })),
-            goalsCount: group._count.goals,
+            goalsCount: group.chatSpaces.reduce((sum, cs) => sum + (cs._count?.goals ?? 0), 0),
             createdAt: group.createdAt,
         };
     }
@@ -347,10 +389,20 @@ export class GroupService {
                     },
                 },
                 chatSpaces: {
+                    include: {
+                        _count: {
+                            select: {
+                                goals: true,
+                            },
+                        },
+                    },
                     orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
                 },
                 _count: {
-                    select: { goals: true },
+                    select: {
+                        members: true,
+                        chatSpaces: true,
+                    },
                 },
             },
             orderBy: { createdAt: 'asc' },
@@ -366,7 +418,7 @@ export class GroupService {
                 name: cs.name,
                 isDefault: cs.isDefault,
             })),
-            goalsCount: group._count.goals,
+            goalsCount: group.chatSpaces.reduce((sum, cs) => sum + (cs._count?.goals ?? 0), 0),
             createdAt: group.createdAt,
         }));
     }
@@ -389,15 +441,17 @@ export class GroupService {
                     },
                 },
                 chatSpaces: {
-                    orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
-                },
-                goals: {
                     include: {
-                        user: {
-                            select: { id: true, name: true },
+                        goals: {
+                            include: {
+                                user: {
+                                    select: { id: true, name: true },
+                                },
+                            },
+                            orderBy: { createdAt: 'desc' },
                         },
                     },
-                    orderBy: { createdAt: 'desc' },
+                    orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
                 },
             },
         });
@@ -418,6 +472,19 @@ export class GroupService {
             }
         }
 
+        // Flatten all goals from all chat spaces
+        const allGoals = group.chatSpaces.flatMap((cs) => 
+            cs.goals.map((g) => ({
+                id: g.id,
+                content: g.content,
+                isValidated: g.isValidated,
+                createdBy: g.user,
+                createdAt: g.createdAt,
+                chatSpaceId: cs.id,
+                chatSpaceName: cs.name,
+            }))
+        );
+
         return {
             id: group.id,
             name: group.name,
@@ -430,13 +497,7 @@ export class GroupService {
                 description: cs.description,
                 isDefault: cs.isDefault,
             })),
-            goals: group.goals.map((g) => ({
-                id: g.id,
-                content: g.content,
-                isValidated: g.isValidated,
-                createdBy: g.user,
-                createdAt: g.createdAt,
-            })),
+            goals: allGoals,
             createdAt: group.createdAt,
         };
     }
@@ -480,14 +541,15 @@ export class GroupService {
                         },
                         chatSpaces: {
                             include: {
+                                // Get first goal for this chat space (any member's goal)
+                                // This enables shared goals - if any member set a goal, all can use it
                                 goals: {
-                                    where: { userId },
                                     include: {
                                         user: {
                                             select: { id: true, name: true },
                                         },
                                     },
-                                    orderBy: { createdAt: 'desc' },
+                                    orderBy: { createdAt: 'asc' },
                                     take: 1,
                                 },
                             },
@@ -623,14 +685,15 @@ export class GroupService {
                         members: true,
                     },
                 },
+                // Get first goal for this chat space (any member's goal)
+                // This enables shared goals - if any member set a goal, all can use it
                 goals: {
-                    where: { userId },
                     include: {
                         user: {
                             select: { id: true, name: true },
                         },
                     },
-                    orderBy: { createdAt: 'desc' },
+                    orderBy: { createdAt: 'asc' },
                     take: 1,
                 },
                 reflections: {

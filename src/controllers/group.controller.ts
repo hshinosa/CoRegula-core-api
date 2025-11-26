@@ -183,6 +183,24 @@ export class GroupController {
     }
 
     /**
+     * DELETE /api/groups/:id
+     * Delete a group (lecturer only)
+     */
+    static async delete(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+        try {
+            await GroupService.deleteGroup(req.params.id, req.user!.userId, req.user!.role);
+
+            res.json({
+                meta: {
+                    message: 'Group deleted successfully',
+                },
+            });
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    /**
      * POST /api/groups/:id/chat-spaces
      * Create a new chat space in a group
      */
