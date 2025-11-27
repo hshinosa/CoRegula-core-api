@@ -1,8 +1,18 @@
 # CoRegula Core API
 
-Backend API service for CoRegula - AI-Powered Collaborative Learning Platform.
+Backend API service for CoRegula - AI-Powered Collaborative Learning Platform. Built with Express.js, TypeScript, PostgreSQL, and Socket.IO.
 
-## Tech Stack
+## 🎯 Purpose
+
+Core-API is the central backend service that:
+- Manages **Authentication & Authorization** (JWT-based)
+- Handles **Course & Group Management** (CRUD operations)
+- Coordinates **Real-time Chat** via Socket.IO
+- Integrates with **AI-Engine** for RAG queries and interventions
+- Logs **Process Mining Events** for research analytics
+- Manages **Knowledge Base** document uploads
+
+## 🛠️ Tech Stack
 
 - **Runtime:** Node.js 20.x
 - **Framework:** Express.js 4.x
