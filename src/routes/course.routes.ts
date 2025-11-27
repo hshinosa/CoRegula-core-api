@@ -9,8 +9,8 @@ import { createGroupSchema, addMembersSchema } from '../validators/group.validat
 
 const router = Router();
 
-// Configure multer for file uploads
-const upload = multer({
+// Configure multer for single file uploads (PDF only - legacy)
+const uploadSingle = multer({
     storage: multer.memoryStorage(),
     limits: {
         fileSize: 10 * 1024 * 1024, // 10MB
@@ -23,6 +23,44 @@ const upload = multer({
         }
     },
 });
+
+// Configure multer for batch uploads (multiple file types including ZIP)
+const SUPPORTED_MIMETYPES = [
+    'application/pdf',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // docx
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation', // pptx
+    'text/plain',
+    'text/markdown',
+    'image/png',
+    'image/jpeg',
+    'image/jpg',
+    'image/gif',
+    'image/webp',
+    'application/zip',
+    'application/x-zip-compressed',
+];
+
+const uploadBatch = multer({
+    storage: multer.memoryStorage(),
+    limits: {
+        fileSize: 50 * 1024 * 1024, // 50MB max per file
+        files: 50, // Max 50 files
+    },
+    fileFilter: (_req, file, cb) => {
+        if (SUPPORTED_MIMETYPES.includes(file.mimetype)) {
+            cb(null, true);
+        } else {
+            cb(new Error(`Unsupported file type: ${file.mimetype}`));
+        }
+    },
+});
+
+// Keep backward compatibility
+const upload = uploadSingle;
+const uploadBatchHandler = uploadBatch.fields([
+    { name: 'files', maxCount: 50 },
+    { name: 'files[]', maxCount: 50 },
+]);
 
 // All routes require authentication
 router.use(verifyToken);
@@ -51,6 +89,7 @@ router.post('/:id/groups/:groupId/members', requireLecturer, validateBody(addMem
 
 // Knowledge base
 router.post('/:id/knowledge-base', requireLecturer, upload.single('file'), CourseController.uploadKnowledgeBase);
+router.post('/:id/knowledge-base/batch', requireLecturer, uploadBatchHandler, CourseController.uploadKnowledgeBaseBatch);
 router.get('/:id/knowledge-base', CourseController.getKnowledgeBase);
 
 export default router;

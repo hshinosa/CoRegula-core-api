@@ -16,6 +16,14 @@ export interface IAttachment {
     previewUrl?: string;
 }
 
+export interface IEngagementAnalysis {
+    engagementType: 'cognitive' | 'behavioral' | 'emotional';
+    isHigherOrder: boolean;
+    lexicalVariety: number;
+    hotIndicators: string[];
+    confidence: number;
+}
+
 export interface IChatLog extends Document {
     courseId: string;
     groupId: string;
@@ -29,6 +37,7 @@ export interface IChatLog extends Document {
     replyTo?: IReplyTo;
     attachments: IAttachment[];
     mentions: string[];
+    engagement?: IEngagementAnalysis;
     createdAt: Date;
 }
 
@@ -54,6 +63,21 @@ const AttachmentSchema = new Schema<IAttachment>(
     { _id: false }
 );
 
+const EngagementAnalysisSchema = new Schema<IEngagementAnalysis>(
+    {
+        engagementType: {
+            type: String,
+            enum: ['cognitive', 'behavioral', 'emotional'],
+            required: true,
+        },
+        isHigherOrder: { type: Boolean, required: true },
+        lexicalVariety: { type: Number, required: true },
+        hotIndicators: { type: [String], default: [] },
+        confidence: { type: Number, required: true },
+    },
+    { _id: false }
+);
+
 const ChatLogSchema = new Schema<IChatLog>(
     {
         courseId: { type: String, required: true, index: true },
@@ -72,6 +96,7 @@ const ChatLogSchema = new Schema<IChatLog>(
         replyTo: { type: ReplyToSchema, required: false },
         attachments: { type: [AttachmentSchema], default: [] },
         mentions: { type: [String], default: [] },
+        engagement: { type: EngagementAnalysisSchema, required: false },
     },
     {
         timestamps: { createdAt: true, updatedAt: false },

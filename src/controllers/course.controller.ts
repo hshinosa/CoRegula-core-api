@@ -126,6 +126,50 @@ export class CourseController {
     }
 
     /**
+     * POST /api/courses/:id/knowledge-base/batch
+     * Upload multiple files or ZIP to knowledge base (lecturer only)
+     * Supports: PDF, DOCX, PPTX, TXT, MD, images, ZIP
+     */
+    static async uploadKnowledgeBaseBatch(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+        try {
+            const rawFiles = req.files as Express.Multer.File[] | Record<string, Express.Multer.File[]> | undefined;
+            const files = Array.isArray(rawFiles)
+                ? rawFiles
+                : rawFiles
+                    ? Object.values(rawFiles).flat()
+                    : [];
+
+            if (!files || files.length === 0) {
+                return res.status(400).json({
+                    error: { code: 'NO_FILES', message: 'No files uploaded' },
+                });
+            }
+
+            // Get options from request body
+            const options = {
+                extractImages: req.body.extract_images !== 'false',
+                performOcr: req.body.perform_ocr !== 'false',
+            };
+
+            const result = await KnowledgeBaseService.uploadBatch(
+                req.params.id,
+                files,
+                req.user!.userId,
+                options
+            );
+
+            res.status(201).json({
+                data: result,
+                meta: {
+                    message: `Successfully uploaded ${result.stats.totalUploaded} files`,
+                },
+            });
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    /**
      * GET /api/courses/:id/knowledge-base
      * Get knowledge base files
      */

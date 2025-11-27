@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import prisma from '../config/database.js';
 import { ApiError } from '../middleware/errorHandler.js';
 import { logger } from '../utils/logger.js';
+import { aiEngineService } from './aiEngine.service.js';
 
 interface UploadedFile {
     originalname: string;
@@ -10,6 +11,27 @@ interface UploadedFile {
     size: number;
     buffer: Buffer;
 }
+
+interface BatchUploadOptions {
+    extractImages?: boolean;
+    performOcr?: boolean;
+}
+
+// Supported file types for batch upload
+const SUPPORTED_MIMETYPES: Record<string, string> = {
+    'application/pdf': 'pdf',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
+    'text/plain': 'txt',
+    'text/markdown': 'md',
+    'image/png': 'image',
+    'image/jpeg': 'image',
+    'image/jpg': 'image',
+    'image/gif': 'image',
+    'image/webp': 'image',
+    'application/zip': 'zip',
+    'application/x-zip-compressed': 'zip',
+};
 
 export class KnowledgeBaseService {
     /**
@@ -118,9 +140,11 @@ export class KnowledgeBaseService {
                 id: true,
                 fileName: true,
                 fileSize: true,
+                mimeType: true,
                 vectorStatus: true,
                 uploadedAt: true,
                 processedAt: true,
+                errorMessage: true,
             },
             orderBy: { uploadedAt: 'desc' },
         });
@@ -137,49 +161,46 @@ export class KnowledgeBaseService {
         courseId: string,
         fileName: string
     ) {
-        const aiEngineUrl = process.env.AI_ENGINE_URL;
-
-        if (!aiEngineUrl) {
-            logger.warn('AI_ENGINE_URL not configured, skipping ingestion');
-            return;
-        }
-
         try {
+            // Check if AI Engine is available
+            const isAvailable = await aiEngineService.isAvailable();
+
+            if (!isAvailable) {
+                logger.warn('AI Engine not available, skipping ingestion');
+                return;
+            }
+
             // Update status to processing
             await prisma.knowledgeBase.update({
                 where: { id: fileId },
                 data: { vectorStatus: 'processing' },
             });
 
-            // Read file
-            const fileBuffer = await fs.readFile(filePath);
+            // Use AI Engine service to ingest
+            const result = await aiEngineService.ingestDocument(
+                fileId,
+                filePath,
+                courseId,
+                fileName
+            );
 
-            // Create form data
-            const formData = new FormData();
-            formData.append('file', new Blob([fileBuffer]), fileName);
-            formData.append('course_id', courseId);
-            formData.append('file_id', fileId);
+            if (result.success) {
+                // Update status to ready
+                await prisma.knowledgeBase.update({
+                    where: { id: fileId },
+                    data: {
+                        vectorStatus: 'ready',
+                        processedAt: new Date(),
+                    },
+                });
 
-            // Send to AI Engine
-            const response = await fetch(`${aiEngineUrl}/ingest`, {
-                method: 'POST',
-                body: formData,
-            });
-
-            if (!response.ok) {
-                throw new Error(`AI Engine responded with ${response.status}`);
+                logger.info(`File ${fileName} processed successfully`, {
+                    fileId,
+                    chunksCreated: result.chunks_created,
+                });
+            } else {
+                throw new Error(result.message || 'AI Engine processing failed');
             }
-
-            // Update status to ready
-            await prisma.knowledgeBase.update({
-                where: { id: fileId },
-                data: {
-                    vectorStatus: 'ready',
-                    processedAt: new Date(),
-                },
-            });
-
-            logger.info(`File ${fileName} processed successfully`);
         } catch (error) {
             logger.error('AI Engine ingestion failed:', error);
 
@@ -202,7 +223,7 @@ export class KnowledgeBaseService {
             where: { id: fileId },
             include: {
                 course: {
-                    select: { ownerId: true },
+                    select: { ownerId: true, id: true },
                 },
             },
         });
@@ -213,6 +234,16 @@ export class KnowledgeBaseService {
 
         if (file.course.ownerId !== lecturerId) {
             throw ApiError.forbidden('You do not own this course');
+        }
+
+        // Delete from vector store
+        try {
+            await aiEngineService.deleteDocument(
+                fileId,
+                `course_${file.course.id}`
+            );
+        } catch {
+            logger.warn(`Failed to delete document from vector store: ${fileId}`);
         }
 
         // Delete file from disk
@@ -228,5 +259,224 @@ export class KnowledgeBaseService {
         });
 
         return { success: true };
+    }
+
+    /**
+     * Upload multiple files or a ZIP file to knowledge base (batch upload)
+     * Supports: PDF, DOCX, PPTX, TXT, MD, images, ZIP
+     */
+    static async uploadBatch(
+        courseId: string, 
+        files: UploadedFile[], 
+        lecturerId: string,
+        options?: BatchUploadOptions
+    ) {
+        // Verify course ownership
+        const course = await prisma.course.findUnique({
+            where: { id: courseId },
+        });
+
+        if (!course) {
+            throw ApiError.notFound('Course not found');
+        }
+
+        if (course.ownerId !== lecturerId) {
+            throw ApiError.forbidden('You do not own this course');
+        }
+
+        // Validate and filter files
+        const validFiles: Array<{ file: UploadedFile; type: string }> = [];
+        const rejectedFiles: Array<{ name: string; reason: string }> = [];
+
+        for (const file of files) {
+            const fileType = SUPPORTED_MIMETYPES[file.mimetype];
+            
+            if (!fileType) {
+                rejectedFiles.push({ 
+                    name: file.originalname, 
+                    reason: `Unsupported file type: ${file.mimetype}` 
+                });
+                continue;
+            }
+
+            // Validate file size (50MB for ZIP, 10MB for others)
+            const maxSize = fileType === 'zip' 
+                ? 50 * 1024 * 1024 
+                : (Number(process.env.MAX_FILE_SIZE_MB) || 10) * 1024 * 1024;
+                
+            if (file.size > maxSize) {
+                rejectedFiles.push({ 
+                    name: file.originalname, 
+                    reason: `File too large (max ${maxSize / 1024 / 1024}MB)` 
+                });
+                continue;
+            }
+
+            validFiles.push({ file, type: fileType });
+        }
+
+        if (validFiles.length === 0) {
+            throw ApiError.badRequest('No valid files to upload', { 
+                rejected: rejectedFiles 
+            });
+        }
+
+        // Create upload directory
+        const uploadDir = process.env.UPLOAD_DIR || './uploads';
+        const courseDir = path.join(uploadDir, courseId);
+        await fs.mkdir(courseDir, { recursive: true });
+
+        // Save files to disk and create DB records
+        const savedFiles: Array<{ 
+            id: string; 
+            path: string; 
+            name: string; 
+            type: string;
+        }> = [];
+
+        const timestamp = Date.now();
+        for (const { file, type } of validFiles) {
+            const sanitizedName = file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
+            const fileName = `${timestamp}_${sanitizedName}`;
+            const filePath = path.join(courseDir, fileName);
+
+            await fs.writeFile(filePath, file.buffer);
+
+            // Create database record
+            const knowledgeBase = await prisma.knowledgeBase.create({
+                data: {
+                    fileName: file.originalname,
+                    filePath,
+                    fileSize: file.size,
+                    mimeType: file.mimetype,
+                    vectorStatus: 'pending',
+                    courseId,
+                    uploadedBy: lecturerId,
+                },
+            });
+
+            savedFiles.push({
+                id: knowledgeBase.id,
+                path: filePath,
+                name: file.originalname,
+                type,
+            });
+        }
+
+        // Send to AI Engine for batch processing (async)
+        this.sendBatchToAIEngine(savedFiles, courseId, options).catch((err) => {
+            logger.error('Failed to send batch to AI Engine:', err);
+        });
+
+        return {
+            uploaded: savedFiles.map(f => ({
+                id: f.id,
+                fileName: f.name,
+                type: f.type,
+                status: 'pending',
+            })),
+            rejected: rejectedFiles,
+            stats: {
+                totalUploaded: savedFiles.length,
+                totalRejected: rejectedFiles.length,
+            },
+        };
+    }
+
+    /**
+     * Send batch of files to AI Engine for processing
+     */
+    private static async sendBatchToAIEngine(
+        files: Array<{ id: string; path: string; name: string; type: string }>,
+        courseId: string,
+        options?: BatchUploadOptions
+    ) {
+        try {
+            // Check if AI Engine is available
+            const isAvailable = await aiEngineService.isAvailable();
+
+            if (!isAvailable) {
+                logger.warn('AI Engine not available, skipping batch ingestion');
+                // Mark all as failed
+                for (const file of files) {
+                    await prisma.knowledgeBase.update({
+                        where: { id: file.id },
+                        data: { 
+                            vectorStatus: 'failed',
+                            errorMessage: 'AI Engine not available',
+                        },
+                    });
+                }
+                return;
+            }
+
+            // Update status to processing
+            for (const file of files) {
+                await prisma.knowledgeBase.update({
+                    where: { id: file.id },
+                    data: { vectorStatus: 'processing' },
+                });
+            }
+
+            // Use AI Engine batch service
+            const result = await aiEngineService.ingestBatch(
+                files.map(f => ({ path: f.path, name: f.name })),
+                courseId,
+                {
+                    extractImages: options?.extractImages ?? true,
+                    performOcr: options?.performOcr ?? true,
+                }
+            );
+
+            if (!result.success) {
+                throw new Error(result.error || result.message || 'AI Engine batch processing failed');
+            }
+
+            // Update each file status based on result documents
+            for (const file of files) {
+                const fileResult = result.documents.find((doc) => doc.filename === file.name);
+
+                if (fileResult?.success) {
+                    await prisma.knowledgeBase.update({
+                        where: { id: file.id },
+                        data: {
+                            vectorStatus: 'ready',
+                            processedAt: new Date(),
+                        },
+                    });
+                } else {
+                    await prisma.knowledgeBase.update({
+                        where: { id: file.id },
+                        data: {
+                            vectorStatus: 'failed',
+                            errorMessage: fileResult?.error || 'AI Engine gagal memproses dokumen',
+                        },
+                    });
+                }
+            }
+
+            logger.info('Batch processed successfully', {
+                courseId,
+                stats: {
+                    totalFiles: result.total_files,
+                    successful: result.successful_files,
+                    failed: result.failed_files,
+                    totalChunks: result.total_chunks,
+                },
+            });
+        } catch (error) {
+            logger.error('AI Engine batch ingestion failed:', error);
+
+            // Update status to failed for all
+            for (const file of files) {
+                await prisma.knowledgeBase.update({
+                    where: { id: file.id },
+                    data: {
+                        vectorStatus: 'failed',
+                        errorMessage: error instanceof Error ? error.message : 'Unknown error',
+                    },
+                });
+            }
+        }
     }
 }

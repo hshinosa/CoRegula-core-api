@@ -15,6 +15,7 @@ import reflectionRoutes from './routes/reflection.routes.js';
 import aiChatRoutes from './routes/aiChat.routes.js';
 import chatSpaceRoutes from './routes/chatSpace.routes.js';
 import healthRoutes from './routes/health.routes.js';
+import analyticsRoutes from './routes/analytics.routes.js';
 
 const app = express();
 
@@ -64,6 +65,7 @@ app.use('/api/goals', goalRoutes);
 app.use('/api/reflections', reflectionRoutes);
 app.use('/api/ai-chats', aiChatRoutes);
 app.use('/api/chat-spaces', chatSpaceRoutes);
+app.use('/api/analytics', analyticsRoutes);
 app.use('/health', healthRoutes);
 
 // 404 handler

@@ -221,6 +221,7 @@ enum VectorStatus {
   processing
   ready
   failed
+  skipped
 }
 
 model KnowledgeBase {

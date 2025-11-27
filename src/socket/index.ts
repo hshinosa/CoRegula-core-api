@@ -6,6 +6,7 @@ import { JwtPayload } from '../middleware/auth.js';
 import { ChatLog } from '../models/ChatLog.js';
 import { SilenceEvent } from '../models/SilenceEvent.js';
 import prisma from '../config/database.js';
+import { aiEngineService } from '../services/aiEngine.service.js';
 
 // Store silence timers per room
 const silenceTimers = new Map<string, NodeJS.Timeout>();
@@ -13,6 +14,95 @@ const SILENCE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 
 // Store online users per room
 const roomUsers = new Map<string, Map<string, { odId: string; userName: string; socketId: string }>>();
+
+// Track last intervention time per room to avoid spamming
+const lastInterventionTime = new Map<string, number>();
+const INTERVENTION_COOLDOWN_MS = 3 * 60 * 1000; // 3 minutes between interventions
+const MESSAGES_BEFORE_CHECK = 5; // Check quality every N messages
+const roomMessageCount = new Map<string, number>();
+
+// Quality thresholds for intervention
+const QUALITY_THRESHOLDS = {
+    LOW_HOT: 20,        // Trigger if HOT% < 20
+    LOW_COGNITIVE: 25,  // Trigger if cognitive engagement < 25%
+    LOW_LEXICAL: 25,    // Trigger if lexical variety < 25%
+};
+
+// HOT (Higher-Order Thinking) detection keywords
+const HOT_KEYWORDS = [
+    'mengapa', 'kenapa', 'bagaimana', 'analisis', 'evaluasi', 'bandingkan',
+    'jelaskan', 'argumentasi', 'kritik', 'sintesis', 'hubungkan', 'simpulkan',
+    'why', 'how', 'analyze', 'evaluate', 'compare', 'explain', 'argue',
+    'menurut saya', 'pendapat saya', 'alasannya', 'karena', 'sebab',
+    'dampak', 'pengaruh', 'akibat', 'solusi', 'alternatif'
+];
+
+// Engagement type keywords
+const COGNITIVE_KEYWORDS = [
+    'mengapa', 'bagaimana', 'analisis', 'evaluasi', 'bandingkan', 'jelaskan',
+    'menurut saya', 'pendapat', 'alasan', 'karena', 'sebab', 'konsep',
+    'teori', 'hipotesis', 'kesimpulan', 'bukti', 'argumen'
+];
+
+const BEHAVIORAL_KEYWORDS = [
+    'saya akan', 'mari kita', 'ayo', 'sudah selesai', 'bisa bantu',
+    'saya coba', 'sudah dikerjakan', 'progress', 'tugas', 'deadline',
+    'submit', 'kirim', 'upload', 'download', 'share', 'bagikan'
+];
+
+const EMOTIONAL_KEYWORDS = [
+    'bagus', 'keren', 'mantap', 'semangat', 'setuju', 'terima kasih',
+    'thanks', 'maaf', 'sorry', 'senang', 'susah', 'sulit', 'mudah',
+    'bingung', 'paham', 'mengerti', 'jelas', 'tidak jelas'
+];
+
+// Helper function to analyze engagement
+function analyzeEngagement(text: string): {
+    engagementType: 'cognitive' | 'behavioral' | 'emotional';
+    isHigherOrder: boolean;
+    lexicalVariety: number;
+    hotIndicators: string[];
+    confidence: number;
+} {
+    const lowerText = text.toLowerCase();
+    const words = lowerText.replace(/[^\w\s]/g, ' ').split(/\s+/).filter(w => w.length > 2);
+    
+    // Calculate lexical variety (Type-Token Ratio)
+    const uniqueWords = new Set(words);
+    const lexicalVariety = words.length > 0 
+        ? Math.round((uniqueWords.size / Math.max(words.length, 1)) * 100)
+        : 0;
+    
+    // Detect HOT indicators
+    const hotIndicators = HOT_KEYWORDS.filter(k => lowerText.includes(k));
+    const isHigherOrder = hotIndicators.length > 0;
+    
+    // Classify engagement type
+    const cognitiveScore = COGNITIVE_KEYWORDS.filter(k => lowerText.includes(k)).length;
+    const behavioralScore = BEHAVIORAL_KEYWORDS.filter(k => lowerText.includes(k)).length;
+    const emotionalScore = EMOTIONAL_KEYWORDS.filter(k => lowerText.includes(k)).length;
+    
+    let engagementType: 'cognitive' | 'behavioral' | 'emotional';
+    if (cognitiveScore >= behavioralScore && cognitiveScore >= emotionalScore) {
+        engagementType = 'cognitive';
+    } else if (behavioralScore >= emotionalScore) {
+        engagementType = 'behavioral';
+    } else {
+        engagementType = 'emotional';
+    }
+    
+    // Calculate confidence based on keyword matches
+    const totalMatches = cognitiveScore + behavioralScore + emotionalScore;
+    const confidence = totalMatches > 0 ? Math.min(0.5 + (totalMatches * 0.1), 1.0) : 0.3;
+    
+    return {
+        engagementType,
+        isHigherOrder,
+        lexicalVariety,
+        hotIndicators,
+        confidence,
+    };
+}
 
 // Intervention messages pool
 const INTERVENTION_MESSAGES = [
@@ -22,6 +112,31 @@ const INTERVENTION_MESSAGES = [
     "Halo! Apakah kalian sudah menemukan solusi? Saya siap membantu jika diperlukan.",
     "Tim, mari kita lanjutkan diskusi. Apa langkah selanjutnya yang ingin kalian ambil?",
 ];
+
+// Quality-based intervention messages
+const QUALITY_INTERVENTIONS = {
+    low_hot: [
+        "💡 **Tips Diskusi Berkualitas:** Coba ajukan pertanyaan 'mengapa' dan 'bagaimana' untuk memperdalam pemahaman. Misalnya: 'Mengapa hal ini penting?' atau 'Bagaimana konsep ini bisa diterapkan?'",
+        "🎯 **Tingkatkan Diskusi:** Diskusi yang baik melibatkan analisis dan evaluasi. Coba bandingkan pendapat kalian atau jelaskan alasan di balik ide-ide yang disampaikan.",
+        "🧠 **Berpikir Kritis:** Apa dampak atau konsekuensi dari topik yang sedang dibahas? Coba analisis lebih dalam dengan memberikan argumen dan bukti.",
+        "📊 **Ajak Berpikir Tingkat Tinggi:** Daripada hanya menyatakan fakta, coba evaluasi kelebihan dan kekurangan dari setiap pendapat yang muncul.",
+    ],
+    low_cognitive: [
+        "📚 **Fokus pada Isi:** Sepertinya diskusi lebih banyak koordinasi. Mari kita bahas substansi materi - apa yang sudah kalian pahami tentang topik ini?",
+        "💬 **Perdalam Diskusi:** Bagaimana pemahaman kalian tentang konsep utama? Coba jelaskan dengan kata-kata sendiri.",
+        "🔍 **Eksplorasi Materi:** Ada hubungan menarik antara topik ini dengan konsep lain. Apa yang bisa kalian hubungkan?",
+        "📖 **Diskusi Substansial:** Apa kesimpulan atau insight baru yang sudah kalian dapatkan dari materi ini?",
+    ],
+    low_lexical: [
+        "📝 **Variasi Bahasa:** Coba gunakan istilah-istilah kunci dari materi pembelajaran untuk memperkaya diskusi.",
+        "🔤 **Kembangkan Kosakata:** Saat menjelaskan, gunakan sinonim atau parafrase untuk menunjukkan pemahaman yang lebih dalam.",
+        "✍️ **Ekspresikan Lebih Rinci:** Jelaskan ide kalian dengan lebih detail menggunakan contoh konkret dan istilah akademis.",
+    ],
+    general: [
+        "🌟 **Ayo Semangat!** Diskusi yang aktif membantu pemahaman bersama. Bagikan pendapat atau pertanyaan kalian!",
+        "🤝 **Kolaborasi:** Coba tanggapi pendapat teman dengan memberikan perspektif tambahan atau pertanyaan lanjutan.",
+    ],
+};
 
 interface AuthenticatedSocket extends Socket {
     user?: JwtPayload;
@@ -293,7 +408,9 @@ export function initSocketIO(server: HttpServer): Server {
                     return;
                 }
 
-                // Save message to MongoDB with chatSpaceId
+                // Save message to MongoDB with chatSpaceId and engagement analysis
+                const engagement = analyzeEngagement(content.trim());
+                
                 const chatLog = new ChatLog({
                     courseId,
                     groupId,
@@ -311,6 +428,7 @@ export function initSocketIO(server: HttpServer): Server {
                     } : undefined,
                     attachments: attachments || [],
                     mentions: mentions || [],
+                    engagement,
                 });
                 await chatLog.save();
 
@@ -334,8 +452,13 @@ export function initSocketIO(server: HttpServer): Server {
 
                 // Check for @AI mention
                 if (content.toLowerCase().includes('@ai')) {
-                    handleAIQuestion(roomId, courseId, groupId, chatSpaceId, content, user.name);
+                    handleAIQuestion(roomId, courseId, groupId, chatSpaceId, content, user.name, user.id);
                 }
+
+                // Check discussion quality and intervene if needed (async, non-blocking)
+                checkAndIntervenForQuality(roomId, courseId, groupId, chatSpaceId).catch(err => {
+                    logger.error('Quality intervention check failed:', err);
+                });
 
                 logger.debug(`Message in ${roomId} from ${user.name}: ${content.substring(0, 50)}...`);
             } catch (error) {
@@ -555,7 +678,142 @@ async function triggerIntervention(roomId: string, courseId: string, groupId: st
 }
 
 /**
+ * Check discussion quality and trigger intervention if needed
+ * Called after every N messages to monitor and improve quality
+ */
+async function checkAndIntervenForQuality(
+    roomId: string,
+    courseId: string,
+    groupId: string,
+    chatSpaceId: string
+): Promise<void> {
+    try {
+        // Increment message count
+        const currentCount = (roomMessageCount.get(roomId) || 0) + 1;
+        roomMessageCount.set(roomId, currentCount);
+
+        // Only check every N messages
+        if (currentCount % MESSAGES_BEFORE_CHECK !== 0) {
+            return;
+        }
+
+        // Check cooldown - don't intervene too frequently
+        const lastIntervention = lastInterventionTime.get(roomId) || 0;
+        if (Date.now() - lastIntervention < INTERVENTION_COOLDOWN_MS) {
+            return;
+        }
+
+        // Get recent messages with engagement data
+        const recentMessages = await ChatLog.find({
+            chatSpaceId,
+            isDeleted: { $ne: true },
+            senderType: { $in: ['student', 'lecturer'] },
+        })
+            .sort({ createdAt: -1 })
+            .limit(15)
+            .lean();
+
+        if (recentMessages.length < 5) {
+            return; // Not enough messages to analyze
+        }
+
+        // Calculate quality metrics from recent messages
+        const messagesWithEngagement = recentMessages.filter(m => m.engagement);
+        if (messagesWithEngagement.length === 0) {
+            return;
+        }
+
+        // Calculate HOT percentage
+        const hotMessages = messagesWithEngagement.filter(m => m.engagement?.isHigherOrder);
+        const hotPercentage = (hotMessages.length / messagesWithEngagement.length) * 100;
+
+        // Calculate cognitive ratio
+        const cognitiveMessages = messagesWithEngagement.filter(
+            m => m.engagement?.engagementType === 'cognitive'
+        );
+        const cognitiveRatio = (cognitiveMessages.length / messagesWithEngagement.length) * 100;
+
+        // Calculate average lexical variety
+        const totalLexical = messagesWithEngagement.reduce(
+            (sum, m) => sum + (m.engagement?.lexicalVariety || 0), 0
+        );
+        const avgLexical = totalLexical / messagesWithEngagement.length;
+
+        // Determine intervention type based on metrics
+        let interventionType: 'low_hot' | 'low_cognitive' | 'low_lexical' | 'general' | null = null;
+        let qualityIssue = '';
+
+        if (hotPercentage < QUALITY_THRESHOLDS.LOW_HOT) {
+            interventionType = 'low_hot';
+            qualityIssue = `HOT thinking: ${hotPercentage.toFixed(0)}%`;
+        } else if (cognitiveRatio < QUALITY_THRESHOLDS.LOW_COGNITIVE) {
+            interventionType = 'low_cognitive';
+            qualityIssue = `Cognitive engagement: ${cognitiveRatio.toFixed(0)}%`;
+        } else if (avgLexical < QUALITY_THRESHOLDS.LOW_LEXICAL) {
+            interventionType = 'low_lexical';
+            qualityIssue = `Lexical variety: ${avgLexical.toFixed(0)}%`;
+        }
+
+        // No intervention needed if quality is good
+        if (!interventionType) {
+            logger.debug(`Quality OK in ${roomId}: HOT=${hotPercentage.toFixed(0)}%, Cognitive=${cognitiveRatio.toFixed(0)}%, Lexical=${avgLexical.toFixed(0)}%`);
+            return;
+        }
+
+        // Select intervention message
+        const messages = QUALITY_INTERVENTIONS[interventionType];
+        const interventionMessage = messages[Math.floor(Math.random() * messages.length)];
+
+        // Save intervention message
+        const chatLog = new ChatLog({
+            courseId,
+            groupId,
+            chatSpaceId,
+            senderId: 'bot',
+            senderName: 'CoRegula Bot',
+            senderType: 'bot',
+            content: interventionMessage,
+            isIntervention: true,
+        });
+        await chatLog.save();
+
+        // Broadcast intervention
+        io.to(roomId).emit('receive_message', {
+            id: chatLog._id?.toString(),
+            senderId: 'bot',
+            senderName: 'CoRegula Bot',
+            senderType: 'bot',
+            content: interventionMessage,
+            isIntervention: true,
+            interventionType: interventionType,
+            createdAt: chatLog.createdAt.toISOString(),
+        });
+
+        // Emit quality alert for UI feedback
+        io.to(roomId).emit('quality_intervention', {
+            chatSpaceId,
+            interventionType,
+            qualityIssue,
+            metrics: {
+                hotPercentage: Math.round(hotPercentage),
+                cognitiveRatio: Math.round(cognitiveRatio),
+                lexicalVariety: Math.round(avgLexical),
+            },
+            timestamp: new Date().toISOString(),
+        });
+
+        // Update last intervention time
+        lastInterventionTime.set(roomId, Date.now());
+
+        logger.info(`Quality intervention sent to ${roomId}: ${interventionType} (${qualityIssue})`);
+    } catch (error) {
+        logger.error('Quality check intervention error:', error);
+    }
+}
+
+/**
  * Handle AI question (when user mentions @AI)
+ * Uses orchestrated pipeline for full analytics and intervention
  */
 async function handleAIQuestion(
     roomId: string,
@@ -563,35 +821,46 @@ async function handleAIQuestion(
     groupId: string,
     chatSpaceId: string,
     question: string,
-    userName: string
+    userName: string,
+    userId: string
 ): Promise<void> {
-    const aiEngineUrl = process.env.AI_ENGINE_URL;
-
     // Show typing indicator
     io.to(roomId).emit('ai_typing', { isTyping: true });
 
     try {
+        // Check if AI Engine is available
+        const isAvailable = await aiEngineService.isAvailable();
+        
         let response: string;
+        let qualityScore: number | undefined;
+        let shouldNotifyTeacher = false;
+        let intervention: string | undefined;
+        let interventionType: string | undefined;
+        let engagementMeta: Record<string, unknown> | undefined;
 
-        if (!aiEngineUrl) {
+        if (!isAvailable) {
             response = "Maaf, AI Assistant sedang tidak tersedia saat ini. Silakan coba lagi nanti.";
         } else {
-            // Call AI Engine
-            const result = await fetch(`${aiEngineUrl}/ask`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    query: question.replace(/@ai/gi, '').trim(),
-                    course_id: courseId,
-                    user_name: userName,
-                }),
+            // Use orchestrated pipeline for full analytics
+            const result = await aiEngineService.orchestratedChat({
+                user_id: userId,
+                group_id: groupId,
+                message: question.replace(/@ai/gi, '').trim(),
+                topic: 'General Discussion',
+                collection_name: `course_${courseId}`,
+                course_id: courseId,
+                chat_room_id: chatSpaceId,
             });
 
-            if (result.ok) {
-                const data = await result.json() as { answer?: string };
-                response = data.answer || "Maaf, saya tidak bisa menemukan jawaban untuk pertanyaan tersebut.";
+            if (result.success) {
+                response = result.bot_response;
+                qualityScore = result.quality_score;
+                shouldNotifyTeacher = result.should_notify_teacher;
+                intervention = result.system_intervention;
+                interventionType = result.intervention_type;
+                engagementMeta = result.meta as Record<string, unknown>;
             } else {
-                response = "Maaf, terjadi kesalahan saat memproses pertanyaan. Silakan coba lagi.";
+                response = result.bot_response || "Maaf, terjadi kesalahan saat memproses pertanyaan. Silakan coba lagi.";
             }
         }
 
@@ -617,6 +886,63 @@ async function handleAIQuestion(
             content: response,
             createdAt: chatLog.createdAt.toISOString(),
         });
+
+        // Emit quality feedback for real-time UI updates
+        if (qualityScore !== undefined || engagementMeta) {
+            const meta = engagementMeta as {
+                hot_percentage?: number;
+                engagement_distribution?: Record<string, number>;
+            } | undefined;
+            
+            io.to(roomId).emit('quality_update', {
+                chatSpaceId,
+                qualityScore: qualityScore ?? 0,
+                engagementTypes: meta?.engagement_distribution ?? {},
+                hotPercentage: meta?.hot_percentage ?? 0,
+                timestamp: new Date().toISOString(),
+            });
+        }
+
+        // Handle system intervention if triggered
+        if (intervention && interventionType) {
+            // Save intervention as bot message
+            const interventionLog = new ChatLog({
+                courseId,
+                groupId,
+                chatSpaceId,
+                senderId: 'bot',
+                senderName: 'CoRegula Bot',
+                senderType: 'bot',
+                content: intervention,
+                isIntervention: true,
+            });
+            await interventionLog.save();
+
+            io.to(roomId).emit('receive_message', {
+                id: interventionLog._id?.toString(),
+                senderId: 'bot',
+                senderName: 'CoRegula Bot',
+                senderType: 'bot',
+                content: intervention,
+                isIntervention: true,
+                interventionType,
+                createdAt: interventionLog.createdAt.toISOString(),
+            });
+        }
+
+        // Notify lecturer if quality is critically low
+        if (shouldNotifyTeacher) {
+            io.emit('lecturer_alert', {
+                type: 'low_quality',
+                courseId,
+                groupId,
+                chatSpaceId,
+                qualityScore,
+                message: `Kualitas diskusi di grup ${groupId} memerlukan perhatian.`,
+                timestamp: new Date().toISOString(),
+            });
+        }
+
     } catch (error) {
         logger.error('AI question error:', error);
 
