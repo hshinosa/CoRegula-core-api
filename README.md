@@ -28,23 +28,14 @@ Core-API is the central backend service that:
 - PostgreSQL 14+
 - MongoDB (optional, for chat logs)
 
-## Quick Start
+## 🗄️ Database Setup
 
-### 1. Install Dependencies
+### Prerequisites
 
-```bash
-cd core-api
-npm install
-```
+- PostgreSQL 14+ installed and running
+- Database `kolabri-db` created (or update .env with your database name)
 
-### 2. Configure Environment
-
-```bash
-cp .env.example .env
-# Edit .env with your database credentials
-```
-
-### 3. Setup Database
+### Quick Setup
 
 ```bash
 # Generate Prisma client
@@ -57,13 +48,38 @@ npm run db:migrate
 npm run db:seed
 ```
 
-### 4. Start Development Server
+### ⚠️ Shared Database with Laravel Client
 
+**Important:** This project shares the PostgreSQL database with the **Laravel Client App**.
+
+**Migration Order:**
 ```bash
-npm run dev
+# 1. Run Core-API migrations FIRST
+cd CoRegula-core-api
+npx prisma migrate deploy
+
+# 2. Then run Laravel migrations
+cd ../CoRegula-client-app
+php artisan migrate
 ```
 
-Server will run on `http://localhost:3000`
+**Table Ownership:**
+- **Core-API manages:** `users`, `courses`, `groups`, `chat_spaces`, `chat_messages`, `learning_goals`, `reflections`, `knowledge_bases`, `ai_chats`
+- **Laravel manages:** `sessions`, `cache`, `jobs` (infrastructure tables)
+
+**Troubleshooting:**
+- If `migrate:fresh` was run in Laravel, Core-API tables will be deleted
+- See `prisma/reset_for_prisma.sql` and `prisma/apply_migration_*.sql` for recovery
+
+### Available SQL Fix Scripts
+
+Located in `prisma/` directory:
+- `fix_role_column.sql` - Fix missing role column in users table
+- `reset_for_prisma.sql` - Reset database for fresh Prisma migrations
+- `apply_migration_1.sql` - Apply first migration manually
+- `apply_migration_2.sql` - Apply second migration manually
+
+## 🚀 Quick Start
 
 ## API Endpoints
 
@@ -165,6 +181,58 @@ After running `npm run db:seed`:
 | `npm run db:seed` | Seed demo data |
 | `npm run db:studio` | Open Prisma Studio |
 | `npm test` | Run tests |
+
+## 🐛 Troubleshooting
+
+### Database Issues
+
+#### Error: "column users.role does not exist"
+**Cause:** Database was reset but migrations table still shows them as applied.
+
+**Fix:**
+```bash
+# Apply the fix SQL
+npx prisma db execute --file prisma/fix_role_column.sql
+
+# Regenerate client
+npx prisma generate
+```
+
+#### Error: "table public.users does not exist"
+**Cause:** Laravel `migrate:fresh` deleted Core-API tables.
+
+**Fix:**
+```bash
+# Apply migrations manually
+npx prisma db execute --file prisma/apply_migration_1.sql
+npx prisma db execute --file prisma/apply_migration_2.sql
+
+# Regenerate client
+npx prisma generate
+```
+
+#### Migration Timeout / Advisory Lock Error
+**Cause:** Another process is holding database lock.
+
+**Fix:**
+```bash
+# Wait a few seconds and retry:
+npx prisma migrate deploy
+```
+
+### Connection Issues
+
+#### PostgreSQL Connection Refused
+```bash
+# Verify PostgreSQL is running
+# Check DATABASE_URL in .env
+```
+
+#### Prisma Client Not Found
+```bash
+# Regenerate client
+npm run db:generate
+```
 
 ## Project Structure
 
