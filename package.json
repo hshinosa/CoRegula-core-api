@@ -1,8 +1,8 @@
 {
-  "name": "coregula-core-api",
+  "name": "kolabri-core-api",
   "version": "1.0.0",
   "type": "module",
-  "description": "CoRegula Core API - Express.js Backend for Collaborative Learning Platform",
+  "description": "Kolabri Core API - Express.js Backend for Collaborative Learning Platform",
   "main": "dist/server.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",
@@ -20,13 +20,13 @@
     "test:run": "vitest run"
   },
   "keywords": [
-    "coregula",
+    "kolabri",
     "education",
     "collaborative-learning",
     "express",
     "typescript"
   ],
-  "author": "CoRegula Team",
+  "author": "Kolabri Team",
   "license": "MIT",
   "dependencies": {
     "@prisma/client": "^6.1.0",

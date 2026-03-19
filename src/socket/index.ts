@@ -4,9 +4,27 @@ import jwt from 'jsonwebtoken';
 import { logger } from '../utils/logger.js';
 import { JwtPayload } from '../middleware/auth.js';
 import { ChatLog } from '../models/ChatLog.js';
+import type { IAttachment, IReplyTo } from '../models/ChatLog.js';
 import { SilenceEvent } from '../models/SilenceEvent.js';
 import prisma from '../config/database.js';
 import { aiEngineService } from '../services/aiEngine.service.js';
+
+interface ChatHistoryItem {
+    _id: { toString(): string };
+    courseId: string;
+    groupId: string;
+    chatSpaceId: string;
+    senderId: string;
+    senderName: string;
+    senderType: 'student' | 'lecturer' | 'ai' | 'bot' | 'system';
+    content: string;
+    isIntervention: boolean;
+    isDeleted: boolean;
+    replyTo?: IReplyTo;
+    attachments: IAttachment[];
+    mentions: string[];
+    createdAt: Date;
+}
 
 // Store silence timers per room
 const silenceTimers = new Map<string, NodeJS.Timeout>();
@@ -239,7 +257,7 @@ export function initSocketIO(server: HttpServer): Server {
                 })
                     .sort({ createdAt: 1 })
                     .limit(100)
-                    .lean();
+                    .lean<ChatHistoryItem[]>();
 
                 // If this is a fresh chat space (no messages yet), send welcome message with goal
                 if (chatHistory.length === 0) {
@@ -266,7 +284,7 @@ export function initSocketIO(server: HttpServer): Server {
                         groupId,
                         chatSpaceId,
                         senderId: 'system',
-                        senderName: 'CoRegula',
+                        senderName: 'Kolabri',
                         senderType: 'system',
                         content: welcomeContent,
                         isIntervention: false,
@@ -280,12 +298,14 @@ export function initSocketIO(server: HttpServer): Server {
                         groupId,
                         chatSpaceId,
                         senderId: 'system',
-                        senderName: 'CoRegula',
+                        senderName: 'Kolabri',
                         senderType: 'system' as const,
                         content: welcomeContent,
                         isIntervention: false,
+                        isDeleted: false,
+                        attachments: [],
+                        mentions: [],
                         createdAt: welcomeMessage.createdAt,
-                        updatedAt: welcomeMessage.updatedAt,
                     });
                 }
 
@@ -836,7 +856,12 @@ async function handleAIQuestion(
         let shouldNotifyTeacher = false;
         let intervention: string | undefined;
         let interventionType: string | undefined;
-        let engagementMeta: Record<string, unknown> | undefined;
+        let engagementMeta:
+            | {
+                  hot_percentage?: number;
+                  engagement_distribution?: Record<string, number>;
+              }
+            | undefined;
 
         if (!isAvailable) {
             response = "Maaf, AI Assistant sedang tidak tersedia saat ini. Silakan coba lagi nanti.";
@@ -858,7 +883,12 @@ async function handleAIQuestion(
                 shouldNotifyTeacher = result.should_notify_teacher;
                 intervention = result.system_intervention;
                 interventionType = result.intervention_type;
-                engagementMeta = result.meta as Record<string, unknown>;
+                engagementMeta = result.meta
+                    ? {
+                          hot_percentage: result.meta.hot_percentage,
+                          engagement_distribution: result.meta.engagement_distribution,
+                      }
+                    : undefined;
             } else {
                 response = result.bot_response || "Maaf, terjadi kesalahan saat memproses pertanyaan. Silakan coba lagi.";
             }
@@ -889,16 +919,11 @@ async function handleAIQuestion(
 
         // Emit quality feedback for real-time UI updates
         if (qualityScore !== undefined || engagementMeta) {
-            const meta = engagementMeta as {
-                hot_percentage?: number;
-                engagement_distribution?: Record<string, number>;
-            } | undefined;
-            
             io.to(roomId).emit('quality_update', {
                 chatSpaceId,
                 qualityScore: qualityScore ?? 0,
-                engagementTypes: meta?.engagement_distribution ?? {},
-                hotPercentage: meta?.hot_percentage ?? 0,
+                engagementTypes: engagementMeta?.engagement_distribution ?? {},
+                hotPercentage: engagementMeta?.hot_percentage ?? 0,
                 timestamp: new Date().toISOString(),
             });
         }

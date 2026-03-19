@@ -21,7 +21,7 @@ async function bootstrap() {
 
         // Start server
         server.listen(PORT, () => {
-            logger.info(`🚀 CoRegula Core API running on port ${PORT}`);
+            logger.info(`🚀 Kolabri Core API running on port ${PORT}`);
             logger.info(`📝 Environment: ${process.env.NODE_ENV || 'development'}`);
             logger.info(`🔗 Health check: http://localhost:${PORT}/health`);
         });
