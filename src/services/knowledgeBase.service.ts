@@ -429,14 +429,14 @@ export class KnowledgeBaseService {
             );
 
             if (!result.success) {
-                throw new Error(result.error || result.message || 'AI Engine batch processing failed');
+                throw new Error(result.message || 'AI Engine batch processing failed');
             }
 
             // Update each file status based on result documents
             for (const file of files) {
-                const fileResult = result.documents.find((doc) => doc.filename === file.name);
+                const fileResult = result.results.find((doc) => doc.filename === file.name);
 
-                if (fileResult?.success) {
+                if (fileResult?.status === 'success') {
                     await prisma.knowledgeBase.update({
                         where: { id: file.id },
                         data: {
@@ -458,10 +458,10 @@ export class KnowledgeBaseService {
             logger.info('Batch processed successfully', {
                 courseId,
                 stats: {
-                    totalFiles: result.total_files,
-                    successful: result.successful_files,
-                    failed: result.failed_files,
-                    totalChunks: result.total_chunks,
+                    totalFiles: result.stats.total_files,
+                    successful: result.stats.successful,
+                    failed: result.stats.failed,
+                    totalChunks: result.stats.total_chunks,
                 },
             });
         } catch (error) {

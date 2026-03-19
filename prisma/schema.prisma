@@ -1,4 +1,4 @@
-// Prisma Schema for CoRegula Core API
+// Prisma Schema for Kolabri Core API
 // PostgreSQL Database
 
 generator client {
