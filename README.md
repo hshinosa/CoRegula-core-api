@@ -1,6 +1,6 @@
-# CoRegula Core API
+# Kolabri Core API
 
-Backend API service for CoRegula - AI-Powered Collaborative Learning Platform. Built with Express.js, TypeScript, PostgreSQL, and Socket.IO.
+Backend API service for Kolabri - AI-Powered Collaborative Learning Platform. Built with Express.js, TypeScript, PostgreSQL, and Socket.IO.
 
 ## 🎯 Purpose
 
@@ -55,11 +55,11 @@ npm run db:seed
 **Migration Order:**
 ```bash
 # 1. Run Core-API migrations FIRST
-cd CoRegula-core-api
+cd Kolabri-core-api
 npx prisma migrate deploy
 
 # 2. Then run Laravel migrations
-cd ../CoRegula-client-app
+cd ../Kolabri-client-app
 php artisan migrate
 ```
 
@@ -161,8 +161,8 @@ Located in `prisma/` directory:
 
 After running `npm run db:seed`:
 
-- **Lecturer:** `lecturer@coregula.edu` / `password123`
-- **Student:** `student1@coregula.edu` / `password123`
+- **Lecturer:** `lecturer@kolabri.edu` / `password123`
+- **Student:** `student1@kolabri.edu` / `password123`
 - **Course Join Code:** `HCI2024`
 
 ## Scripts
