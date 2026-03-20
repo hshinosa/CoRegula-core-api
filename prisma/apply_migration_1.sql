@@ -1,4 +1,4 @@
--- Migration 1: 20251125144046_coregula
+-- Migration 1: 20251125144046_kolabri
 
 -- CreateEnum - SKIP (sudah ada)
 -- CREATE TYPE "UserRole" AS ENUM ('student', 'lecturer', 'admin');

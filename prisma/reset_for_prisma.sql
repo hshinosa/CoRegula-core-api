@@ -1,5 +1,5 @@
 -- ============================================================================
--- FIX: Reset Database untuk CoRegula (Prisma + Laravel Shared Database)
+-- FIX: Reset Database untuk Kolabri (Prisma + Laravel Shared Database)
 -- ============================================================================
 --
 -- PROBLEM:
@@ -51,14 +51,14 @@ DROP TYPE IF EXISTS "VectorStatus" CASCADE;
 -- LANGKAH SELANJUTNYA:
 --
 -- 1. Jalankan Prisma migrations:
---    cd CoRegula-core-api
+--    cd Kolabri-core-api
 --    npx prisma migrate deploy
 --
 -- 2. Generate Prisma Client:
 --    npx prisma generate
 --
 -- 3. Jalankan Laravel migrations (akan skip users table):
---    cd ../CoRegula-client-app
+--    cd ../Kolabri-client-app
 --    php artisan migrate:fresh
 --
 -- 4. Restart kedua aplikasi

@@ -2,7 +2,7 @@ import mongoose from 'mongoose';
 import { logger } from '../utils/logger.js';
 
 export async function connectMongoDB(): Promise<void> {
-    const mongoUrl = process.env.MONGODB_URL || 'mongodb://localhost:27017/coregula';
+    const mongoUrl = process.env.MONGODB_URL || 'mongodb://localhost:27017/kolabri';
 
     try {
         await mongoose.connect(mongoUrl);

@@ -11,10 +11,10 @@ async function main() {
     // Create demo lecturer
     const hashedPassword = await bcrypt_1.default.hash('password123', 10);
     const lecturer = await prisma.user.upsert({
-        where: { email: 'lecturer@coregula.edu' },
+        where: { email: 'lecturer@kolabri.edu' },
         update: {},
         create: {
-            email: 'lecturer@coregula.edu',
+            email: 'lecturer@kolabri.edu',
             password: hashedPassword,
             name: 'Dr. Ahmad Lecturer',
             role: client_1.UserRole.lecturer,
@@ -23,9 +23,9 @@ async function main() {
     console.log('✅ Created lecturer:', lecturer.email);
     // Create demo students
     const studentEmails = [
-        'student1@coregula.edu',
-        'student2@coregula.edu',
-        'student3@coregula.edu',
+        'student1@kolabri.edu',
+        'student2@kolabri.edu',
+        'student3@kolabri.edu',
     ];
     const students = [];
     for (const email of studentEmails) {
@@ -104,8 +104,8 @@ async function main() {
     console.log('🎉 Seeding completed!');
     console.log('');
     console.log('Demo Credentials:');
-    console.log('  Lecturer: lecturer@coregula.edu / password123');
-    console.log('  Student:  student1@coregula.edu / password123');
+    console.log('  Lecturer: lecturer@kolabri.edu / password123');
+    console.log('  Student:  student1@kolabri.edu / password123');
     console.log('  Course Join Code: HCI2024');
 }
 main()
